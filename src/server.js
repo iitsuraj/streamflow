@@ -669,6 +669,9 @@ const streamParts = async (outputDir, rtmp_url, stream_key, loop) => {
     const totalSegments = segmentFiles.length;
 
     const stream = () => {
+      if(!streams[stream_key]){
+        return;
+      }
       if (currentSegment >= totalSegments) {
         if (loop === 'true') {
           currentSegment = 0; // Loop back to the first segment if looping is enabled
@@ -735,7 +738,7 @@ app.post('/start-stream', async (req, res) => {
     if(!fs.existsSync(outputDir)){
       await splitVideoIntoSegments(sourceFilePath, outputDir, 14); // Split video into .ts segments
     }
-
+    streams[stream_key] = true;
     console.log('Starting stream:', { rtmp_url, bitrate, fps, resolution, title });
 
     await streamParts(outputDir, rtmp_url, stream_key, loop); // Stream the segments
@@ -777,6 +780,7 @@ app.post('/start-stream', async (req, res) => {
       if (!result) throw new Error("Gagal menyimpan data ke database");
       
       streams[stream_key] = {
+        ...(streams[stream_key] ? streams[stream_key]: {})
         startTime: Date.now(),
         containerId: containerId,
         videoPath: sourceFilePath,
