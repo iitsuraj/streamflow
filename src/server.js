@@ -733,7 +733,7 @@ app.post('/start-stream', async (req, res) => {
       return sendError(res, 'Video tidak ditemukan di server');
     }
     if(!fs.existsSync(outputDir)){
-      await splitVideoIntoSegments(sourceFilePath, outputDir, 30); // Split video into .ts segments
+      await splitVideoIntoSegments(sourceFilePath, outputDir, 14); // Split video into .ts segments
     }
 
     console.log('Starting stream:', { rtmp_url, bitrate, fps, resolution, title });
