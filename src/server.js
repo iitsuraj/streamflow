@@ -718,13 +718,13 @@ app.post('/start-stream', async (req, res) => {
 
     const command = ffmpeg(streamFilePath)
       .inputFormat('mp4')
-      .inputOptions(['-re', ...(loop === 'true' ? ['-stream_loop -1'] : [])])
+      .inputOptions(['-re', ...(loop === 'true' ? ['-stream_loop -1'] : []),  '-fflags +genpts', '-probesize', '32', '-analyzeduration', '0',])
       .outputOptions([
         `-r ${fps || 30}`,
         '-threads 2',
         '-x264-params "nal-hrd=cbr"',
         '-c:v libx264',
-        '-preset veryfast',
+        '-preset ultrafast',
         '-tune zerolatency',
         `-b:v ${bitrate}k`,
         `-maxrate ${bitrate}k`,
@@ -735,7 +735,10 @@ app.post('/start-stream', async (req, res) => {
         '-c:a aac',
         '-b:a 128k',
         '-ar 44100',
-        '-f flv'
+        '-f flv',
+        '-flush_packets', '1',
+        '-muxdelay', '0',
+        '-muxpreload', '0'
       ])
       .output(`${rtmp_url}/${stream_key}`);
 
