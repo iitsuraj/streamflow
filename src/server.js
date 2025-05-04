@@ -687,8 +687,8 @@ const streamParts = async (outputDir, rtmp_url, stream_key, loop) => {
           '-f', 'flv',    // FLV format for RTMP
           '-preset', 'ultrafast', // Optional: For low-latency streaming
           '-b:v', '2M',  // Optional: Set video bitrate (adjust as needed)
-          `${rtmp_url}/${stream_key}`
-        ]);
+        ]).output(`${rtmp_url}/${stream_key}`)  // Specify the RTMP output destination
+        ;
 
       command.on('end', () => {
         console.log(`Segment ${currentSegment + 1} streamed`);
