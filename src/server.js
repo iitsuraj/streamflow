@@ -678,6 +678,7 @@ const streamParts = async (outputDir, rtmp_url, stream_key, loop) => {
       }
 
       const segmentFile = path.join(outputDir, segmentFiles[currentSegment]);
+      console.log(segmentFile);
       const command = ffmpeg(segmentFile)
         .inputOptions('-f', 'mpegts')
         .outputOptions([
