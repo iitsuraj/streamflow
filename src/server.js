@@ -661,6 +661,8 @@ const splitVideoIntoSegments = (sourcePath, outputDir, segmentDuration = 10) => 
 const streamParts = async (outputDir, rtmp_url, stream_key, loop) => {
   try {
     const segmentFiles = fs.readdirSync(outputDir).filter(file => file.endsWith('.ts'));
+    console.log(segmentFiles);
+    console.log(segmentFiles[0]);
     let currentSegment = 0;
     const totalSegments = segmentFiles.length;
 
