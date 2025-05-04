@@ -780,7 +780,7 @@ app.post('/start-stream', async (req, res) => {
       if (!result) throw new Error("Gagal menyimpan data ke database");
       
       streams[stream_key] = {
-        ...(typeof streams[stream_key] === "object" ? streams[stream_key]: {})
+        ...(typeof streams[stream_key] === "object" ? streams[stream_key]: {}),
         startTime: Date.now(),
         containerId: containerId,
         videoPath: sourceFilePath,
