@@ -633,6 +633,77 @@ app.get('/api/videos-all', requireAuthAPI, async (req, res) => {
 const streams = {};
 const monitorStreams = new Map();
 const scheduledStreams = new Map();
+const splitVideoIntoSegments = (sourcePath, outputDir, segmentDuration = 10) => {
+  return new Promise((resolve, reject) => {
+    if (!fs.existsSync(outputDir)) {
+      fs.mkdirSync(outputDir);
+    }
+
+    const args = [
+      '-i', sourcePath,
+      '-c', 'copy',
+      '-f', 'segment',
+      '-segment_time', segmentDuration.toString(),
+      '-reset_timestamps', '1',
+      path.join(outputDir, '%d.ts')
+    ];
+
+    const proc = spawn('ffmpeg', args);
+
+    proc.stderr.on('data', data => console.log(`FFmpeg: ${data}`));
+    proc.on('error', reject);
+    proc.on('close', code => {
+      if (code === 0) resolve();
+      else reject(new Error(`FFmpeg exited with code ${code}`));
+    });
+  });
+};
+const streamParts = async (outputDir, rtmp_url, stream_key, loop) => {
+  try {
+    const segmentFiles = fs.readdirSync(outputDir).filter(file => file.endsWith('.ts'));
+    let currentSegment = 0;
+    const totalSegments = segmentFiles.length;
+
+    const stream = () => {
+      if (currentSegment >= totalSegments) {
+        if (loop === 'true') {
+          currentSegment = 0; // Loop back to the first segment if looping is enabled
+        } else {
+          return; // Stop streaming if no loop
+        }
+      }
+
+      const segmentFile = path.join(outputDir, segmentFiles[currentSegment]);
+      const command = ffmpeg(segmentFile)
+        .inputOptions('-f', 'mpegts')
+        .outputOptions([
+          '-c:v', 'copy', // Copy the H.264 video stream (no re-encoding)
+          '-c:a', 'aac',  // Use AAC audio codec (no change needed)
+          '-f', 'flv',    // FLV format for RTMP
+          '-preset', 'ultrafast', // Optional: For low-latency streaming
+          '-b:v', '2M',  // Optional: Set video bitrate (adjust as needed)
+          `${rtmp_url}/${stream_key}`
+        ]);
+
+      command.on('end', () => {
+        console.log(`Segment ${currentSegment + 1} streamed`);
+        currentSegment++;
+        stream(); // Start streaming next segment
+      });
+
+      command.on('error', (err) => {
+        console.error('Error streaming segment:', err);
+        stream(); // Continue with the next segment even if one fails
+      });
+
+      command.run();
+    };
+
+    stream(); // Start streaming the segments
+  } catch (err) {
+    console.error('Error streaming parts:', err);
+  }
+};
 
 app.post('/start-stream', async (req, res) => {
   try {
@@ -645,140 +716,33 @@ app.post('/start-stream', async (req, res) => {
       loop, 
       title,
       videoPath,
-      schedule_enabled, 
-      schedule_start_enabled, 
-      schedule_start, 
-      schedule_duration 
     } = req.body;
 
     if (!videoPath) return sendError(res, 'Video tidak ditemukan');
     if (!title) return sendError(res, 'Judul belum diisi');
 
     const sourceFilePath = path.join(__dirname, 'uploads', videoPath);
+    const baseName = path.basename(videoPath, path.extname(videoPath));
+    const outputDir = path.join(__dirname, 'uploads', baseName);
     if (!fs.existsSync(sourceFilePath)) {
       return sendError(res, 'Video tidak ditemukan di server');
     }
+    if(!fs.existsSync(outputDir)){
+      await splitVideoIntoSegments(sourceFilePath, outputDir, 30); // Split video into .ts segments
+    }
 
-    const streamFileName = generateRandomFileName() + path.extname(videoPath);
-    const streamFilePath = path.join(__dirname, 'uploads', streamFileName);
-
-    await fs.promises.copyFile(sourceFilePath, streamFilePath);
-
-    const fullRtmpUrl = `${rtmp_url}/${stream_key}`;
     console.log('Starting stream:', { rtmp_url, bitrate, fps, resolution, title });
 
-    // Handle penjadwalan streaming
-    if (schedule_enabled === '1' && schedule_start_enabled === '1') {
-      const startTime = new Date(schedule_start).getTime();
-      const duration = schedule_duration ? parseInt(schedule_duration, 10) * 60 * 1000 : null;
-
-      const containerData = {
-        title,
-        preview_file: path.basename(videoPath),
-        stream_file: streamFileName,
-        stream_key,
-        stream_url: rtmp_url,
-        bitrate: parseInt(bitrate, 10),
-        resolution,
-        fps: parseInt(fps, 10),
-        loop_enabled: loop === 'true' ? 1 : 0,
-        container_order: Date.now(),
-        is_streaming: 1,
-        schedule_enabled: 1,
-        schedule_start_enabled: 1,
-        schedule_start,
-        schedule_duration: duration ? Math.floor(duration / 1000 / 60) : null
-      };
-
-      const result = await new Promise((resolve, reject) => {
-        database.addStreamContainer(containerData, (err, data) => {
-          if (err) reject(err);
-          resolve(data);
-        });
-      });
-
-      scheduleStream({
-        videoPath: streamFilePath,
-        stream_key,
-        rtmp_url,
-        containerId: result.lastID,
-        fps,
-        bitrate,
-        resolution,
-        loop
-      }, startTime, duration);
-
-      return res.json({ 
-        message: 'Stream scheduled',
-        scheduled: true,
-        startTime,
-        duration 
-      });
-    }
-
-    const command = ffmpeg(streamFilePath)
-      .inputFormat('mp4')
-      .inputOptions(['-re', ...(loop === 'true' ? ['-stream_loop -1'] : []),  '-fflags +genpts', '-probesize', '32', '-analyzeduration', '0',])
-      .outputOptions([
-        `-r ${fps || 30}`,
-        '-threads 2',
-        '-x264-params "nal-hrd=cbr"',
-        '-c:v libx264',
-        '-preset ultrafast',
-        '-tune zerolatency',
-        `-b:v ${bitrate}k`,
-        `-maxrate ${bitrate}k`,
-        `-bufsize ${bitrate * 2}k`,
-        '-pix_fmt yuv420p',
-        '-g 60',
-        `-vf scale=${resolution}`,
-        '-c:a aac',
-        '-b:a 128k',
-        '-ar 44100',
-        '-f flv',
-        '-flush_packets', '1',
-        '-muxdelay', '0',
-        '-muxpreload', '0'
-      ])
-      .output(`${rtmp_url}/${stream_key}`);
-
-    const duration = parseInt(schedule_duration, 10) * 60 * 1000;
-    if (schedule_enabled === '1' && duration) {
-      setTimeout(() => {
-        if (streams[stream_key]) {
-          try {
-            streams[stream_key].process.on('error', (err) => {
-              if (err.message.includes('SIGTERM')) {
-                return;
-              }
-              console.error('FFmpeg error:', err);
-            });
-
-            streams[stream_key].process.kill('SIGTERM');
-            database.updateStreamContainer(
-              streams[stream_key].containerId, 
-              { is_streaming: 0, auto_stopped: true }, 
-              (err) => {
-                if (err) console.error('Error updating stream status:', err);
-            });
-
-            delete streams[stream_key];
-          } catch (error) {
-            console.error('Error stopping stream:', error);
-          }
-        }
-      }, duration);
-    }
+    await streamParts(outputDir, rtmp_url, stream_key, loop); // Stream the segments
 
     let responseSent = false;
     let containerId;
 
     try {
-
       const containerData = {
         title: title,
         preview_file: path.basename(videoPath),
-        stream_file: streamFileName,
+        stream_file: videoPath,
         stream_key: stream_key,
         stream_url: rtmp_url,
         bitrate: parseInt(bitrate, 10),
@@ -808,34 +772,10 @@ app.post('/start-stream', async (req, res) => {
       if (!result) throw new Error("Gagal menyimpan data ke database");
       
       streams[stream_key] = {
-        process: command,
         startTime: Date.now(),
         containerId: containerId,
-        videoPath: streamFilePath,
-        duration: duration
+        videoPath: sourceFilePath,
       };
-
-      command
-        .on('end', () => {
-          console.log('Streaming selesai:', stream_key);
-          const monitor = monitorStreams.get(stream_key);
-          if (monitor) {
-            monitor.isActive = false;
-          }
-          delete streams[stream_key];
-          database.updateStreamContainer(containerId, { is_streaming: 0 }, (err) => {
-            if (err) console.error('Error updating database:', err);
-          });
-        })
-        .on('error', (err) => {
-          console.error('Stream error:', err);
-          delete streams[stream_key];
-          if (!responseSent) {
-            sendError(res, 'Error during streaming', 500);
-            responseSent = true;
-          }
-        })
-        .run();
 
       setTimeout(() => {
         if (!responseSent) {
@@ -843,6 +783,7 @@ app.post('/start-stream', async (req, res) => {
           responseSent = true;
         }
       }, 5000);
+
     } catch (error) {
       console.error('Error starting stream:', error);
       if (!responseSent) {
