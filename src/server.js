@@ -722,19 +722,16 @@ app.post('/start-stream', async (req, res) => {
       .outputOptions([
         `-r ${fps || 30}`,
         '-threads 2',
-        '-x264-params "nal-hrd=cbr"',
-        // '-c:v libx264',
-        '-c:v copy',
+        `-b:v ${bitrate || 3000}k`,
         '-preset ultrafast',
-        '-tune zerolatency',
-        `-b:v ${bitrate}k`,
+        '-g 60',
+        '-sc_threshold 0',
         `-maxrate ${bitrate}k`,
         `-bufsize ${bitrate * 2}k`,
         '-pix_fmt yuv420p',
-        '-g 60',
-        `-vf scale=${resolution}`,
-        // '-c:a aac',
-          '-c:a copy',
+        '-c:v copy',
+        '-tune zerolatency',
+        '-c:a copy',
         '-b:a 96k',
         '-ar 44100',
         '-f flv'
@@ -1171,18 +1168,20 @@ function scheduleStream(streamData, startTime, duration) {
           `-r ${streamData.fps || 30}`,
           '-threads 2',
           `-b:v ${streamData.bitrate || 3000}k`,
-          `-s ${streamData.resolution || '1920x1080'}`,
-          '-preset veryfast',
-          '-g 50',
+          '-preset ultrafast',
+          '-g 60',
           '-sc_threshold 0',
-          '-minrate:v 0',
-          '-maxrate:v 4000k',
-          '-bufsize:v 8000k',
+          `-maxrate ${streamData.bitrate}k`,
+          `-bufsize ${streamData.bitrate * 2}k`,
           '-pix_fmt yuv420p',
-          '-f flv'
+          '-f flv',
+          '-c:v copy',
+          '-tune zerolatency',
+          '-c:a copy',
+          '-b:a 96k',
+          '-ar 44100',
         ])
         .output(`${streamData.rtmp_url}/${streamData.stream_key}`);
-
       command.on('error', (err) => {
         if (err.message.includes('SIGTERM')) {
           return;
